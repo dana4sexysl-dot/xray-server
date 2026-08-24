@@ -43,54 +43,48 @@ jobs:
           if command -v uuidgen >/dev/null 2>&1; then
             UUID="$(uuidgen)"
           else
-            UUID="$(python3 - <<'PY'
-import uuid,sys
-print(uuid.uuid4())
-PY
-)"
+            UUID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
           fi
           echo "Generated UUID: $UUID"
 
           # --- Create xray config ----------------------------------------------
           XRAY_CONFIG_PATH="${WORKDIR}/xray.json"
           cat > "$XRAY_CONFIG_PATH" <<JSON
-{
-  "log": {
-    "loglevel": "warning"
-  },
-  "inbounds": [
-    {
-      "port": 8080,
-      "protocol": "vless",
-      "settings": {
-        "clients": [
           {
-            "id": "${UUID}",
-            "flow": "xtls-rprx-vision",
-            "encryption": "none"
+            "log": {
+              "loglevel": "warning"
+            },
+            "inbounds": [
+              {
+                "port": 8080,
+                "protocol": "vless",
+                "settings": {
+                  "clients": [
+                    {
+                      "id": "${UUID}",
+                      "flow": "xtls-rprx-vision",
+                      "encryption": "none"
+                    }
+                  ],
+                  "decryption": "none"
+                },
+                "streamSettings": {
+                  "network": "ws",
+                  "wsSettings": {
+                    "path": "/vless"
+                  }
+                }
+              }
+            ],
+            "outbounds": [
+              {
+                "protocol": "freedom",
+                "settings": {}
+              }
+            ]
           }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "ws",
-        "wsSettings": {
-          "path": "/vless"
-        }
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "protocol": "freedom",
-      "settings": {}
-    }
-  ]
-}
-JSON
+          JSON
           echo "Wrote xray config to $XRAY_CONFIG_PATH"
-          ls -l "$XRAY_CONFIG_PATH" || true
-          sed -n '1,120p' "$XRAY_CONFIG_PATH" || true
 
           # --- Run Xray container ----------------------------------------------
           if docker ps -a --format '{{.Names}}' | grep -q '^xray$'; then
@@ -117,7 +111,7 @@ JSON
           BACKOFF=(0 5 15 60)
 
           DOMAIN=""
-          while [ $ATTEMPT -lt $MAX_ATTEMPTS ] ; do
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
             ATTEMPT=$((ATTEMPT+1))
             echo "Attempt #${ATTEMPT} to start serveo tunnel..."
 
@@ -188,4 +182,4 @@ JSON
           sleep 6h
 
           echo "Completed 6h uptime period; exiting."
-    shell: bash
+        shell: bash
