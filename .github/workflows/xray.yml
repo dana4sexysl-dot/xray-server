@@ -47,7 +47,7 @@ jobs:
           fi
           echo "Generated UUID: $UUID"
 
-          # --- Create xray config ----------------------------------------------
+          # --- Create xray config (FIXED: removed "encryption" field) ---------
           XRAY_CONFIG_PATH="${WORKDIR}/xray.json"
           cat > "$XRAY_CONFIG_PATH" <<JSON
           {
@@ -62,8 +62,7 @@ jobs:
                   "clients": [
                     {
                       "id": "${UUID}",
-                      "flow": "xtls-rprx-vision",
-                      "encryption": "none"
+                      "flow": "xtls-rprx-vision"
                     }
                   ],
                   "decryption": "none"
