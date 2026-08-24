@@ -1,17 +1,17 @@
-name: xray-serveo-tunnel
+name: xray-vless
 on:
   workflow_dispatch: {}
 
 jobs:
   run-xray:
-    name: Run Xray + serveo tunnel
+    name: Run Xray
     runs-on: ubuntu-latest
     permissions: write-all
     steps:
       - name: Checkout repository (workspace)
         uses: actions/checkout@v4
 
-      - name: Prepare and run Xray + serveo tunnel
+      - name: Run Xray and output VLESS link
         run: |
           #!/usr/bin/env bash
           set -euo pipefail
@@ -20,11 +20,6 @@ jobs:
           cleanup() {
             rc=$?
             echo "=== CLEANUP START (exit code: $rc) ==="
-            if [ -n "${SSH_PID-}" ] && ps -p "$SSH_PID" > /dev/null 2>&1; then
-              echo "Killing serveo ssh (pid $SSH_PID)..."
-              kill "$SSH_PID" || true
-              wait "$SSH_PID" 2>/dev/null || true
-            fi
             if docker ps -a --format '{{.Names}}' | grep -q '^xray$'; then
               echo "Stopping docker container 'xray'..."
               docker rm -f xray || true
@@ -47,7 +42,7 @@ jobs:
           fi
           echo "Generated UUID: $UUID"
 
-          # --- Create xray config (FIXED: removed "encryption" field) ---------
+          # --- Create xray config -----------------------------------------------
           XRAY_CONFIG_PATH="${WORKDIR}/xray.json"
           cat > "$XRAY_CONFIG_PATH" <<JSON
           {
@@ -71,6 +66,7 @@ jobs:
                   "network": "ws",
                   "wsSettings": {
                     "path": "/vless"
+                    }
                   }
                 }
               }
@@ -103,78 +99,23 @@ jobs:
             exit 1
           fi
 
-          # --- Serveo tunnel with retries -------------------------------------
-          SERVEO_LOG="${WORKDIR}/serveo.log"
-          ATTEMPT=0
-          MAX_ATTEMPTS=3
-          BACKOFF=(0 5 15 60)
+          # --- Verify xray is responding ----------------------------------------
+          echo "Verifying xray container logs:"
+          docker logs xray --tail 20 || true
 
-          DOMAIN=""
-          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-            ATTEMPT=$((ATTEMPT+1))
-            echo "Attempt #${ATTEMPT} to start serveo tunnel..."
+          # --- Get runner's IP address ------------------------------------------
+          RUNNER_IP=$(hostname -I | awk '{print $1}')
+          echo "Runner IP: $RUNNER_IP"
 
-            rm -f "$SERVEO_LOG"
-            touch "$SERVEO_LOG"
-
-            ( ssh -R 443:localhost:8080 serveo.net -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=60 -o StrictHostKeyChecking=no >"$SERVEO_LOG" 2>&1 ) &
-            SSH_PID=$!
-            echo "serveo ssh started (pid $SSH_PID), waiting for forwarding info..."
-
-            FOUND=0
-            for i in $(seq 1 30); do
-              if grep -Eo 'https?://[a-zA-Z0-9.-]+serveo.net' "$SERVEO_LOG" 2>/dev/null | head -n1 >/dev/null; then
-                DOMAIN="$(grep -Eo 'https?://[a-zA-Z0-9.-]+serveo.net' "$SERVEO_LOG" | head -n1 | sed -E 's#https?://##; s#/$##')"
-                FOUND=1
-                break
-              fi
-              if grep -i 'forwarding' "$SERVEO_LOG" 2>/dev/null | grep -Eo '[a-zA-Z0-9.-]+serveo.net' | head -n1 >/dev/null; then
-                DOMAIN="$(grep -i 'forwarding' "$SERVEO_LOG" | grep -Eo '[a-zA-Z0-9.-]+serveo.net' | head -n1)"
-                FOUND=1
-                break
-              fi
-              sleep 1
-            done
-
-            if [ "$FOUND" -eq 1 ] && [ -n "${DOMAIN}" ]; then
-              echo "Serveo published domain: $DOMAIN"
-              DOMAIN="$(echo "$DOMAIN" | sed -E 's#/$##')"
-              break
-            fi
-
-            echo "Serveo did not provide a domain within timeout. Collecting logs:"
-            echo "----- serveo.log (partial) -----"
-            tail -n +1 "$SERVEO_LOG" || true
-            echo "----- end serveo.log -----"
-
-            if ps -p "$SSH_PID" > /dev/null 2>&1; then
-              echo "Killing serveo ssh (pid $SSH_PID) before retry..."
-              kill "$SSH_PID" || true
-              wait "$SSH_PID" 2>/dev/null || true
-            fi
-
-            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
-              WAIT=${BACKOFF[$ATTEMPT]}
-              echo "Retrying in ${WAIT}s..."
-              sleep "$WAIT"
-            fi
-          done
-
-          if [ -z "${DOMAIN}" ]; then
-            echo "ERROR: serveo tunnel failed after ${MAX_ATTEMPTS} attempts."
-            echo "Final serveo.log:"
-            cat "$SERVEO_LOG" || true
-            exit 2
-          fi
-
-          # --- Final verification & VLESS link output -------------------------
-          echo "Verifying xray process inside container (docker logs tail):"
-          docker logs xray --tail 100 || true
-
-          VLESS="vless://${UUID}@${DOMAIN}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni=${DOMAIN}&type=ws&path=%2Fvless"
+          # --- Output VLESS link for local access -------------------------------
+          VLESS="vless://${UUID}@${RUNNER_IP}:8080?encryption=none&flow=xtls-rprx-vision&security=none&type=ws&path=%2Fvless"
           echo "================================================================"
-          echo "VLESS link (copy this):"
+          echo "VLESS link (local access via runner IP):"
           echo "$VLESS"
+          echo "================================================================"
+          echo "UUID: $UUID"
+          echo "Access via: ${RUNNER_IP}:8080"
+          echo "WebSocket path: /vless"
           echo "================================================================"
 
           echo "Service will remain active for 6 hours (sleep 6h). To cancel, stop the workflow."
